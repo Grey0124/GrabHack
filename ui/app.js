@@ -29,6 +29,7 @@ function renderTrace(state) {
   let lastAction = null;
   let lastReflection = null;
   let latestSuggestion = null;
+  let latestInstruction = null;
 
   steps.forEach((entry) => {
     // Render each known key if present to avoid hiding reflection
@@ -44,8 +45,9 @@ function renderTrace(state) {
 
       if (key === 'action') lastAction = val;
       if (key === 'reflection') lastReflection = val;
-      if (key === 'observation' && val && typeof val === 'object' && val.suggestion) {
-        latestSuggestion = val.suggestion;
+      if (key === 'observation' && val && typeof val === 'object') {
+        if (val.suggestion) latestSuggestion = val.suggestion;
+        if (val.delivered_instructions && val.message) latestInstruction = val.message;
       }
     });
   });
@@ -55,6 +57,10 @@ function renderTrace(state) {
     if (latestSuggestion) {
       const rec = el('div', 'summary-line');
       rec.textContent = `Recommendation: ${latestSuggestion}`;
+      summary.appendChild(rec);
+    } else if (latestInstruction) {
+      const rec = el('div', 'summary-line');
+      rec.textContent = `Instruction: ${latestInstruction}`;
       summary.appendChild(rec);
     } else if (lastReflection && lastReflection.repair_action) {
       const ra = lastReflection.repair_action;

@@ -42,6 +42,29 @@ def _same_action(a: Dict[str, Any] | None, b: Dict[str, Any] | None) -> bool:
     return (a.get("tool") == b.get("tool")) and (a.get("args") == b.get("args"))
 
 
+def _already_satisfied(tool_name: str, args: Dict[str, Any] | None, cd: Dict[str, Any]) -> bool:
+    """Return True if a proposed repair action wouldn't add new info."""
+    args = args or {}
+    try:
+        if tool_name == "get_merchant_status":
+            mid = args.get("merchant_id")
+            return ("prep_minutes" in cd) and (mid is None or cd.get("merchant_id") in (None, mid))
+        if tool_name == "check_traffic":
+            rid = args.get("route_id")
+            return ("status" in cd and "route_id" in cd) and (rid is None or cd.get("route_id") == rid)
+        if tool_name == "contact_recipient_via_chat":
+            return "delivered_instructions" in cd
+        if tool_name == "suggest_safe_drop_off":
+            addr = args.get("address")
+            return ("suggestion" in cd) and (addr is None or cd.get("address") == addr)
+        if tool_name == "find_nearby_locker":
+            addr = args.get("address")
+            return ("locker" in cd) and (addr is None or cd.get("address") == addr)
+    except Exception:
+        return False
+    return False
+
+
 def _tool_signature_str(name: str, fn) -> str:
     sig = inspect.signature(fn)
     params = []
@@ -340,6 +363,28 @@ def reflect_node(state: AgentState) -> AgentState:
     Otherwise, decide to stop or continue planning.
     """
     steps = int(state.collected_data.get("steps", 0))
+    # Early stop if we already have a clear resolution
+    cd = state.collected_data or {}
+    if cd.get("delivered_instructions") is True:
+        state.solved = True
+        try:
+            state.scratchpad[-1]["reflection"] = {
+                "stop": True,
+                "why": "Recipient provided instructions; proceed per message and stop.",
+            }
+        except Exception:
+            pass
+        _p("[reflect] stopping: delivered_instructions present")
+        return state
+    if ("suggestion" in cd) or ("locker" in cd):
+        state.solved = True
+        try:
+            reason = "Safe-drop suggestion selected." if "suggestion" in cd else "Locker fallback selected."
+            state.scratchpad[-1]["reflection"] = {"stop": True, "why": reason}
+        except Exception:
+            pass
+        _p("[reflect] stopping: terminal recommendation present")
+        return state
     msg = [
         {"role": "system", "content": "Critique last step; repair if needed."},
         {
@@ -382,6 +427,18 @@ def reflect_node(state: AgentState) -> AgentState:
             except Exception:
                 pass
             _p("[reflect] ignoring repeated repair; routing to plan")
+            return state
+        # If repair doesn't add new information (already satisfied), continue planning
+        if _already_satisfied(tool_name, arguments, cd):
+            state.solved = False
+            try:
+                state.scratchpad[-1]["reflection"] = {
+                    "stop": False,
+                    "why": "Repair duplicates known facts; continuing plan.",
+                }
+            except Exception:
+                pass
+            _p("[reflect] ignoring redundant repair; routing to plan")
             return state
         # Queue a repair action and signal routing to `act`
         state.solved = False
