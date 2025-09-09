@@ -17,7 +17,7 @@ BASE_URL = os.getenv("OLLAMA_API_BASE", "http://localhost:11434/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "llama3.1:8b")
 TIMEOUT_S = float(os.getenv("OLLAMA_TIMEOUT", "300"))
 MAX_TOKENS = int(os.getenv("OLLAMA_MAX_TOKENS", "256"))
-MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "3"))
+MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "5"))
 PROGRESS = os.getenv("AGENT_PROGRESS", "1") not in ("0", "false", "False", "no", "")
 OFFLINE = os.getenv("AGENT_OFFLINE", "0") not in ("0", "false", "False", "no", "")
 
@@ -34,6 +34,12 @@ TOOLS = {
     "suggest_safe_drop_off": logistics.suggest_safe_drop_off,
     "find_nearby_locker": logistics.find_nearby_locker,
 }
+
+
+def _same_action(a: Dict[str, Any] | None, b: Dict[str, Any] | None) -> bool:
+    if not a or not b:
+        return False
+    return (a.get("tool") == b.get("tool")) and (a.get("args") == b.get("args"))
 
 
 def _tool_signature_str(name: str, fn) -> str:
@@ -206,22 +212,58 @@ def plan_node(state: AgentState) -> AgentState:
         # Fail-soft if validation or nudging fails
         pass
 
-    # Minimal validation and state update
+    # Minimal validation and candidate selection
     tool_name = plan.get("tool_name")
     if tool_name not in TOOLS:
         raise ValueError(f"Planner selected unknown tool: {tool_name}")
     arguments = plan.get("arguments") or {}
     thought = str(plan.get("thought", "")).strip()
+
+    candidate = {"tool": tool_name, "args": arguments}
+
+    # Prevent repeating exact same action back-to-back (or recent two actions)
+    recent = state.recent_actions[-2:] if state.recent_actions else []
+    last_action = state.recent_actions[-1] if state.recent_actions else None
+    if _same_action(candidate, last_action) or any(_same_action(candidate, ra) for ra in recent):
+        reconsider = _chat_json([
+            {"role": "system", "content": (
+                "Your previous proposal repeated the same action. Choose a DIFFERENT tool that advances the goal per priorities."
+            )},
+            {"role": "user", "content": (
+                f"Goal: {state.goal}\n"
+                f"Prior steps: {json.dumps(state.scratchpad)}\n"
+                f"Tools: {', '.join(list(TOOLS.keys()))}.\n"
+                'Return JSON: {"thought":"...","tool_name":"...","arguments":{...}}'
+            )}
+        ], response_format={"type": "json_object"})
+        candidate = {"tool": reconsider.get("tool_name", tool_name), "args": reconsider.get("arguments", arguments)}
+
+    # Enforce prerequisites: merchant -> traffic -> contact before drop/locker
+    cd = state.collected_data or {}
+    has_merchant = ("prep_minutes" in cd) or ("merchant_id" in cd)
+    has_traffic = ("route_id" in cd) and ("status" in cd)
+    attempted_contact = ("delivered_instructions" in cd)
+    if not has_merchant:
+        candidate = {"tool": "get_merchant_status", "args": {"merchant_id": "M-77"}}
+    elif not has_traffic:
+        candidate = {"tool": "check_traffic", "args": {"route_id": "R-3"}}
+    elif not attempted_contact:
+        candidate = {"tool": "contact_recipient_via_chat", "args": {"order_id": "O-123"}}
+
+    # Record thought and action, track recent actions
     state.add_thought(thought)
-    # Support both keys so act_node can pick either
     state.scratchpad.append({
         "action": {
-            "tool": tool_name,
-            "arguments": arguments,
-            "args": arguments,
+            "tool": candidate["tool"],
+            "args": candidate["args"],
+            "arguments": candidate["args"],  # keep for compatibility
         }
     })
-    _p(f"[plan #{step_idx}] tool={tool_name} args={json.dumps(arguments)} thought={thought}")
+    state.recent_actions.append({"tool": candidate["tool"], "args": candidate["args"]})
+    if len(state.recent_actions) > 5:
+        state.recent_actions.pop(0)
+
+    _p(f"[plan #{step_idx}] tool={candidate['tool']} args={json.dumps(candidate['args'])} thought={thought}")
     return state
 
 
@@ -306,6 +348,21 @@ def reflect_node(state: AgentState) -> AgentState:
     if repair:
         tool_name = (repair.get("tool_name") or "").strip()
         arguments = repair.get("arguments") or {}
+        candidate = {"tool": tool_name, "args": arguments}
+        last_action = state.recent_actions[-1] if state.recent_actions else None
+        # If repair equals last action, stop to avoid loops
+        if _same_action(candidate, last_action):
+            state.solved = True
+            # annotate a clearer reason
+            try:
+                state.scratchpad[-1]["reflection"] = {
+                    "stop": True,
+                    "why": "Repair equals last action; preventing repeat loop.",
+                }
+            except Exception:
+                pass
+            _p("[reflect] stopping due to repeated repair proposal")
+            return state
         # Queue a repair action and signal routing to `act`
         state.solved = False
         state.collected_data["pending_repair"] = True
@@ -313,6 +370,9 @@ def reflect_node(state: AgentState) -> AgentState:
             "thought": "repair",
             "action": {"tool": tool_name, "args": arguments, "arguments": arguments},
         })
+        state.recent_actions.append({"tool": tool_name, "args": arguments})
+        if len(state.recent_actions) > 5:
+            state.recent_actions.pop(0)
         _p(f"[reflect] repair -> tool={tool_name} args={json.dumps(arguments)} why={decision.get('why','')}")
         return state
 

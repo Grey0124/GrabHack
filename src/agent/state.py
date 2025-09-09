@@ -17,6 +17,7 @@ class AgentState(BaseModel):
     goal: str
     scratchpad: List[Dict[str, Any]] = Field(default_factory=list)
     collected_data: Dict[str, Any] = Field(default_factory=dict)
+    recent_actions: List[Dict[str, Any]] = Field(default_factory=list)
     solved: bool = False
 
     # Convenience helpers for ReAct-style traces
@@ -40,4 +41,3 @@ class AgentState(BaseModel):
     def remember(self, key: str, value: Any) -> None:
         """Accumulate structured data useful for later steps or summary."""
         self.collected_data[key] = value
-
