@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Synapse — Agent Demo</title>
+    <link rel="stylesheet" href="/ui/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Project Synapse — Agent Demo</h1>
+      <div class="actions">
+        <button id="warmBtn" title="Warm the model and keep it alive">Warm Model</button>
+        <label><input type="checkbox" id="offlineToggle" /> Offline mode</label>
+      </div>
+    </header>
+
+    <main>
+      <section class="left">
+        <div class="card">
+          <h2>Scenarios</h2>
+          <div class="row">
+            <select id="scenarioSel"></select>
+            <button id="loadScenario">Load</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Disruption</h2>
+          <textarea id="prompt" rows="6" placeholder="Describe the disruption..."></textarea>
+          <div class="row">
+            <button id="solveBtn">Solve</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="right">
+        <div class="card">
+          <h2>Chain of Thought</h2>
+          <div id="trace"></div>
+        </div>
+
+        <div class="card">
+          <h2>Raw JSON</h2>
+          <pre id="jsonOut"></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>API: <code>/solve</code>, <code>/warmup</code>, <code>/scenarios</code></span>
+    </footer>
+
+    <script src="/ui/app.js"></script>
+  </body>
+  </html>
+

@@ -1,0 +1,5 @@
+[
+  {"name": "Recipient Unavailable", "prompt": "Recipient unavailable at high-rise; valuable package; follow safe policy."},
+  {"name": "Overloaded Restaurant", "prompt": "Kitchen prep 40+ minutes; keep driver utilized; offer alternatives and notify."},
+  {"name": "Traffic Obstruction", "prompt": "Major accident blocks primary route; urgent airport passenger; re-route & inform."}
+]
