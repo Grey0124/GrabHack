@@ -214,17 +214,15 @@ def plan_node(state: AgentState) -> AgentState:
 
     # Minimal validation and candidate selection
     tool_name = plan.get("tool_name")
-    if tool_name not in TOOLS:
-        raise ValueError(f"Planner selected unknown tool: {tool_name}")
     arguments = plan.get("arguments") or {}
     thought = str(plan.get("thought", "")).strip()
 
-    candidate = {"tool": tool_name, "args": arguments}
+    candidate = {"tool": tool_name, "args": arguments} if tool_name in TOOLS else None
 
     # Prevent repeating exact same action back-to-back (or recent two actions)
     recent = state.recent_actions[-2:] if state.recent_actions else []
     last_action = state.recent_actions[-1] if state.recent_actions else None
-    if _same_action(candidate, last_action) or any(_same_action(candidate, ra) for ra in recent):
+    if candidate and (_same_action(candidate, last_action) or any(_same_action(candidate, ra) for ra in recent)):
         reconsider = _chat_json([
             {"role": "system", "content": (
                 "Your previous proposal repeated the same action. Choose a DIFFERENT tool that advances the goal per priorities."
@@ -236,7 +234,10 @@ def plan_node(state: AgentState) -> AgentState:
                 'Return JSON: {"thought":"...","tool_name":"...","arguments":{...}}'
             )}
         ], response_format={"type": "json_object"})
-        candidate = {"tool": reconsider.get("tool_name", tool_name), "args": reconsider.get("arguments", arguments)}
+        reconsider_tool = reconsider.get("tool_name")
+        reconsider_args = reconsider.get("arguments") or {}
+        if reconsider_tool in TOOLS:
+            candidate = {"tool": reconsider_tool, "args": reconsider_args}
 
     # Enforce prerequisites: merchant -> traffic -> contact before drop/locker
     cd = state.collected_data or {}
@@ -249,6 +250,10 @@ def plan_node(state: AgentState) -> AgentState:
         candidate = {"tool": "check_traffic", "args": {"route_id": "R-3"}}
     elif not attempted_contact:
         candidate = {"tool": "contact_recipient_via_chat", "args": {"order_id": "O-123"}}
+    # If still no valid candidate (e.g., planner returned unknown tool and prerequisites met), choose a safe default
+    if not candidate or candidate.get("tool") not in TOOLS:
+        addr = (state.collected_data or {}).get("address") or "recipient address"
+        candidate = {"tool": "suggest_safe_drop_off", "args": {"address": addr}}
 
     # Record thought and action, track recent actions
     state.add_thought(thought)
