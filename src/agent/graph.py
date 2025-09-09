@@ -255,6 +255,21 @@ def plan_node(state: AgentState) -> AgentState:
         addr = (state.collected_data or {}).get("address") or "recipient address"
         candidate = {"tool": "suggest_safe_drop_off", "args": {"address": addr}}
 
+    # Synthesize a default thought if LLM omitted it
+    if not thought:
+        default_thoughts = {
+            "get_merchant_status": "Confirm merchant prep time to assess delay risk on hot food.",
+            "check_traffic": "Check route impact to reorder stops and avoid cascading delays.",
+            "contact_recipient_via_chat": "Try to obtain delivery instructions from the recipient before safe-drop.",
+            "suggest_safe_drop_off": "Propose a safe-drop (concierge) to protect food integrity and reduce delays.",
+            "find_nearby_locker": "Fallback to a nearby locker if safe-drop is not possible.",
+        }
+        try:
+            tool_for_default = candidate["tool"] if candidate else None
+        except Exception:
+            tool_for_default = None
+        thought = default_thoughts.get(tool_for_default, "Choose next best action per priorities.")
+
     # Record thought and action, track recent actions
     state.add_thought(thought)
     state.scratchpad.append({
@@ -355,18 +370,18 @@ def reflect_node(state: AgentState) -> AgentState:
         arguments = repair.get("arguments") or {}
         candidate = {"tool": tool_name, "args": arguments}
         last_action = state.recent_actions[-1] if state.recent_actions else None
-        # If repair equals last action, stop to avoid loops
+        # If repair equals last action, ignore and continue planning to avoid loops
         if _same_action(candidate, last_action):
-            state.solved = True
-            # annotate a clearer reason
+            state.solved = False
+            # annotate a clearer reason but keep the loop going
             try:
                 state.scratchpad[-1]["reflection"] = {
-                    "stop": True,
-                    "why": "Repair equals last action; preventing repeat loop.",
+                    "stop": False,
+                    "why": "Repair equals last action; continuing plan to avoid repeat loop.",
                 }
             except Exception:
                 pass
-            _p("[reflect] stopping due to repeated repair proposal")
+            _p("[reflect] ignoring repeated repair; routing to plan")
             return state
         # Queue a repair action and signal routing to `act`
         state.solved = False
