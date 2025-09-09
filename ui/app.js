@@ -117,7 +117,7 @@ async function solve() {
   const disruption = document.getElementById('prompt').value.trim();
   const offline = document.getElementById('offlineToggle').checked;
   if (!disruption) {
-    alert('Please enter a disruption description.');
+    alert('Please enter a description.');
     return;
   }
   const body = { disruption, offline };
