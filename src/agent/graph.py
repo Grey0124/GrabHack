@@ -165,10 +165,12 @@ def plan_node(state: AgentState) -> AgentState:
         {
             "role": "system",
             "content": (
-                "You are a last-mile planner. Think step-by-step. "
-                "Propose ONE action using an available tool with JSON args. "
-                f"Tools: {list(TOOLS.keys())}. "
-                f"Tool signatures: {tool_sigs}. "
+                "You are a last-mile logistics planner.\n"
+                "PRIORITIES (in order): (1) food integrity (hot items), (2) minimize cascading driver delays, (3) customer communication & consent, (4) safety/compliance.\n"
+                f"TOOLS: {', '.join(list(TOOLS.keys()))}.\n"
+                f"TOOL SIGNATURES: {tool_sigs}.\n"
+                "ALGORITHM: First confirm merchant delay and route status; then try contacting recipient for instructions; if unreachable, propose safe-drop if policy allows; else propose nearby locker; prefer actions that reduce downstream delays when driver has stacked deliveries.\n"
+                "Output strictly JSON: {\"thought\":\"...\", \"tool_name\":\"...\", \"arguments\":{...}}.\n"
                 "Only use argument keys exactly as in the signatures. Do not invent keys."
             ),
         },
@@ -178,11 +180,31 @@ def plan_node(state: AgentState) -> AgentState:
                 f"Goal: {state.goal}\n"
                 f"Relevant past learnings: {json.dumps(tips)}\n"
                 f"Prior steps: {json.dumps(state.scratchpad)}\n"
-                'Return JSON: {"thought":"...","tool_name":"...","arguments":{...}}'
+                'Return JSON only.'
             ),
         },
     ]
     plan = _chat_json(msg, response_format={"type": "json_object"})
+
+    # Optional validator: ensure core factors are considered across plan + history
+    try:
+        must_consider = ["traffic", "merchant", "recipient"]
+        history_txt = json.dumps(state.scratchpad).lower()
+        plan_txt = json.dumps(plan).lower()
+        if any(k not in (history_txt + plan_txt) for k in must_consider):
+            nudge = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You skipped one of: traffic, merchant, recipient. Revise the next single action based on the stated PRIORITIES and ALGORITHM."
+                    ),
+                },
+                msg[1],
+            ]
+            plan = _chat_json(nudge, response_format={"type": "json_object"})
+    except Exception:
+        # Fail-soft if validation or nudging fails
+        pass
 
     # Minimal validation and state update
     tool_name = plan.get("tool_name")

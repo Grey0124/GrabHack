@@ -21,18 +21,57 @@ function el(tag, cls, text) {
 
 function renderTrace(state) {
   const trace = document.getElementById('trace');
+  const summary = document.getElementById('summary');
   trace.innerHTML = '';
+  if (summary) summary.innerHTML = '';
   const steps = state?.scratchpad || [];
+
+  let lastAction = null;
+  let lastReflection = null;
+  let latestSuggestion = null;
+
   steps.forEach((entry) => {
-    const [key] = Object.keys(entry);
-    const val = entry[key];
-    const card = el('div', `step ${key}`);
-    card.appendChild(el('div', 'step-title', key.toUpperCase()));
-    const pre = el('pre');
-    pre.textContent = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
-    card.appendChild(pre);
-    trace.appendChild(card);
+    // Render each known key if present to avoid hiding reflection
+    ['thought', 'action', 'observation', 'reflection'].forEach((key) => {
+      if (entry[key] === undefined) return;
+      const val = entry[key];
+      const card = el('div', `step ${key}`);
+      card.appendChild(el('div', 'step-title', key.toUpperCase()));
+      const pre = el('pre');
+      pre.textContent = typeof val === 'string' ? val : JSON.stringify(val, null, 2);
+      card.appendChild(pre);
+      trace.appendChild(card);
+
+      if (key === 'action') lastAction = val;
+      if (key === 'reflection') lastReflection = val;
+      if (key === 'observation' && val && typeof val === 'object' && val.suggestion) {
+        latestSuggestion = val.suggestion;
+      }
+    });
   });
+
+  // Summarize recommended next step or suggestion for quick scanning
+  if (summary) {
+    if (latestSuggestion) {
+      const rec = el('div', 'summary-line');
+      rec.textContent = `Recommendation: ${latestSuggestion}`;
+      summary.appendChild(rec);
+    } else if (lastReflection && lastReflection.repair_action) {
+      const ra = lastReflection.repair_action;
+      const rec = el('div', 'summary-line');
+      rec.textContent = `Repair Action: ${ra.tool_name}(${JSON.stringify(ra.arguments || {})})`;
+      summary.appendChild(rec);
+    } else if (lastAction) {
+      const rec = el('div', 'summary-line');
+      rec.textContent = `Next Action: ${lastAction.tool}(${JSON.stringify(lastAction.arguments || lastAction.args || {})})`;
+      summary.appendChild(rec);
+    }
+    if (lastReflection && lastReflection.why) {
+      const why = el('div', 'summary-line');
+      why.textContent = `Reflection: ${lastReflection.why}`;
+      summary.appendChild(why);
+    }
+  }
 }
 
 function renderJSON(state) {
@@ -94,4 +133,3 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('warmBtn').addEventListener('click', warmModel);
   document.getElementById('solveBtn').addEventListener('click', solve);
 });
-
